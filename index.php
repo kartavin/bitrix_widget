@@ -1,179 +1,123 @@
-<?php
-require_once('include/config.php');
-require_once('include/request.php');
-
-session_start();
-
-$error = "";
-
-// clear auth session
-if(isset($_REQUEST["clear"]) || $_SERVER["REQUEST_METHOD"] == "POST")
-{
-	unset($_SESSION["query_data"]);
-}
-
-if($_SERVER["REQUEST_METHOD"] == "POST")
-{
-/******************* get code *************************************/
-	if(!empty($_POST["portal"]))
-	{
-		$domain = $_POST["portal"];
-		$params = array(
-			"response_type" => "code",
-			"client_id" => CLIENT_ID,
-			"redirect_uri" => REDIRECT_URI,
-		);
-		$path = "/oauth/authorize/";
-
-		redirect(PROTOCOL."://".$domain.$path."?".http_build_query($params));
-	}
-/******************** /get code ***********************************/
-}
-
-if(isset($_REQUEST["code"]))
-{
-/****************** get access_token ******************************/
-	$code = $_REQUEST["code"];
-	$domain = $_REQUEST["domain"];
-	$member_id = $_REQUEST["member_id"];
-
-	$params = array(
-		"grant_type" => "authorization_code",
-		"client_id" => CLIENT_ID,
-		"client_secret" => CLIENT_SECRET,
-		"redirect_uri" => REDIRECT_URI,
-		"scope" => SCOPE,
-		"code" => $code,
-	);
-	$path = "/oauth/token/";
-
-	$query_data = query("GET", PROTOCOL."://".$domain.$path, $params);
-
-	if(isset($query_data["access_token"]))
-	{
-		$_SESSION["query_data"] = $query_data;
-		$_SESSION["query_data"]["ts"] = time();
-
-		redirect(PATH);
-		die();
-	}
-	else
-	{
-		$error = "Произошла ошибка авторизации! ".print_r($query_data, 1);
-	}
-/********************** /get access_token *************************/
-}
-elseif(isset($_REQUEST["refresh"]))
-{
-/******************** refresh auth ********************************/
-	$params = array(
-		"grant_type" => "refresh_token",
-		"client_id" => CLIENT_ID,
-		"client_secret" => CLIENT_SECRET,
-		"redirect_uri" => REDIRECT_URI,
-		"scope" => SCOPE,
-		"refresh_token" => $_SESSION["query_data"]["refresh_token"],
-	);
-
-	$path = "/oauth/token/";
-
-	$query_data = query("GET", PROTOCOL."://".$_SESSION["query_data"]["domain"].$path, $params);
-
-	if(isset($query_data["access_token"]))
-	{
-		$_SESSION["query_data"] = $query_data;
-		$_SESSION["query_data"]["ts"] = time();
-
-		redirect(PATH);
-		die();
-	}
-	else
-	{
-		$error = "Произошла ошибка авторизации! ".print_r($query_data);
-	}
-/********************* /refresh auth ******************************/
-}
-
-require_once(dirname(__FILE__)."/include/header.php");
-
-if(!isset($_SESSION["query_data"]))
-{
-/******************************************************************/
-	if($error)
-	{
-		echo '<b>'.$error.'</b>';
-	}
-?>
-<form action="" method="post">
-	<input type="text" name="portal" placeholder="Адрес портала">
-	<input type="submit" value="Авторизоваться">
-</form>
 <?
-
-/******************************************************************/
-
-}
-else
-{
-/******************************************************************/
-
-	if(time() > $_SESSION["query_data"]["ts"] + $_SESSION["query_data"]["expires_in"])
+	function redirect($url)
 	{
-		echo "<b>Авторизационные данные истекли</b>";
-	}
-	else
-	{
-		echo "Авторизационные данные истекут через ".($_SESSION["query_data"]["ts"] + $_SESSION["query_data"]["expires_in"] - time())." секунд";
-	}
-?>
+		Header("HTTP 302 Found");
+		Header("Location: ".$url);
+		die();
+	}	
 
-<ul>
-	<li><a href="<?=PATH?>?test=event.bind">Установить обработчик события</a>
-	<li><a href="<?=PATH?>?test=event.get">Просмотр установленных обработчиков событий</a>
-	<li><a href="<?=PATH?>?test=event.unbind">Удаление установленного обработчика события</a>
-</ul>
+	require_once('tools.php');
 
-<a href="<?=PATH?>?refresh=1">Обновить данные авторизации</a><br />
-<a href="<?=PATH?>?clear=1">Очистить данные авторизации</a><br />
+	$domain = isset($_REQUEST['portal']) ? $_REQUEST['portal'] : ( isset($_REQUEST['domain']) ? $_REQUEST['domain'] : 'empty');
 
-<?
-	$test = isset($_REQUEST["test"]) ? $_REQUEST["test"] : "";
-	switch($test)
-	{
-		case 'event.bind':
-			$data = call($_SESSION["query_data"]["domain"], "event.bind", array(
-				"auth" => $_SESSION["query_data"]["access_token"],
-				"EVENT" => "ONVOXIMPLANTCALLEND",
-				"HANDLER" => SKIPPED_CALL_HANDLER_URI,
-				"auth_type" => AUTH_TYPE_USER_ID,
-			));
+	$step = 0;
 
-		break;
+	if (isset($_REQUEST['portal'])) $step = 1;
+	if (isset($_REQUEST['code']))$step = 2;
+	
+	$btokenRefreshed = null;
 
-		case 'event.get':
-    		$data = call($_SESSION["query_data"]["domain"], "event.get", array(
-        		"auth" => $_SESSION["query_data"]["access_token"])
-    		);
-		break;
+	$obB24App = new \Bitrix24\Bitrix24();
+	$arScope = array('user');
+	
+	$obB24App->setApplicationScope($arScope);
+	$obB24App->setApplicationId(APP_ID); //из настроек в MP
+	$obB24App->setApplicationSecret(APP_SECRET_CODE); //из настроек в MP
+	$obB24App->setRedirectUri(APP_REG_URL);
+	$obB24App->setDomain($domain);
 
-		case 'event.unbind':
-			$data = call($_SESSION["query_data"]["domain"], "event.unbind", array(
-				"auth" => $_SESSION["query_data"]["access_token"],
-				'EVENT' => 'ONVOXIMPLANTCALLEND',
-				'HANDLER' => SKIPPED_CALL_HANDLER_URI
-			));
-		break;
-
+	switch ($step) {
+		case 1:
+			$obB24App->requestCode();
+			break;
+		case 2:
+			
+			$obB24App->setApplicationCode($_REQUEST['code']);
+			$arAccessParams = $obB24App->requestAccessToken();
+			
+			$obB24App->setMemberId($arAccessParams['member_id']);
+			$obB24App->setRefreshToken($arAccessParams['refresh_token']);
+			$obB24App->setAccessToken($arAccessParams['access_token']);
+			
+			$obB24User = new \Bitrix24\Bitrix24User\Bitrix24User($obB24App);
+			$arCurrentB24User = $obB24User->current();
+			break;
 		default:
-			$data = $_SESSION["query_data"];
-
-		break;
-	}
-
-	echo '<pre>'; var_export($data); echo '</pre>';
-
-	/******************************************************************/
-}
-
-require_once(dirname(__FILE__)."/include/footer.php");
+			break;
+	}	
 ?>
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ловец лидов</title>
+
+    <!-- Bootstrap -->
+    <link href="css/bootstrap.min.css" rel="stylesheet">
+    <link href="//maxcdn.bootstrapcdn.com/font-awesome/4.4.0/css/font-awesome.min.css" rel="stylesheet">
+
+    <!-- HTML5 Shim and Respond.js IE8 support of HTML5 elements and media queries -->
+    <!-- WARNING: Respond.js doesn't work if you view the page via file:// -->
+    <!--[if lt IE 9]>
+    <script src="//oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
+    <script src="//oss.maxcdn.com/libs/respond.js/1.4.2/respond.min.js"></script>
+    <![endif]-->
+	
+	<!-- Include roboto.css to use the Roboto web font, material.css to include the theme and ripples.css to style the ripple effect -->
+	<link href="css/roboto.min.css" rel="stylesheet">
+	<link href="css/material.min.css" rel="stylesheet">
+	<link href="css/ripples.min.css" rel="stylesheet">
+	
+    <link href="css/application.css" rel="stylesheet">
+
+</head>
+<body>
+<div id="app" class="container-fluid">
+
+	<div class="bs-callout bs-callout-danger">
+		<h4>Ловец лидов</h4>
+		<p>Приложение с аутентификация в Битрикс24 по протоколу OAuth 2.0</p>
+	</div>
+	<div class="alert alert-dismissable alert-warning hidden" id="error"></div>
+	<div class="row">
+		<div class="col-md-12 col-sm-12">
+			<?if ($step == 0) {?>
+			<form action="" method="post">
+				<input type="text" name="portal" placeholder="Адрес портала">
+				<input type="submit" value="Авторизоваться">
+			</form>
+			<?
+			}
+			elseif ($step == 2) {
+				echo $arCurrentB24User["result"]["NAME"]." ".$arCurrentB24User["result"]["LAST_NAME"]."<br/><pre>";
+				print_r($arAccessParams);
+				echo "</pre>";
+			}
+			?>
+		</div>
+	</div>
+</div>
+
+<script type="text/javascript" src="//ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
+<script type="text/javascript" src="js/bootstrap.min.js"></script>
+<script src="js/ripples.min.js"></script>
+<script src="js/material.min.js"></script>
+<script src="//api.bitrix24.com/api/v1/"></script>
+
+<script>
+	
+    $(document).ready(function () {
+
+		BX24.init(function(){
+		
+			$.material.init();
+
+		});
+    });
+
+</script>
+
+</body>
+</html>
